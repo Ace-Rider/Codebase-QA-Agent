@@ -1,0 +1,14 @@
+node_modules/
+dist/
+web/dist/
+.env
+.DS_Store
+*.log
+.idea/
+
+# Local database
+prisma/*.db
+prisma/*.db-journal
+
+# OS / editor temp files
+Thumbs.db

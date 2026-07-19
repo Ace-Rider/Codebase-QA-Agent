@@ -1,0 +1,49 @@
+{
+  "name": "my-first-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch src/index.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "prisma:generate": "prisma generate",
+    "typecheck": "npm run typecheck:server && npm run typecheck:web",
+    "typecheck:server": "tsc -p tsconfig.json --noEmit",
+    "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -p tsconfig.json",
+    "build:web": "vite build --config web/vite.config.ts",
+    "start": "node dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.3",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "concurrently": "^9.2.1",
+    "prisma": "^6.19.3",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vite": "^7.1.11"
+  },
+  "dependencies": {
+    "@prisma/adapter-better-sqlite3": "7.8.0",
+    "@prisma/client": "^6.19.3",
+    "better-sqlite3": "12.11.1",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "fast-glob": "^3.3.3",
+    "openai": "^6.44.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  }
+}
