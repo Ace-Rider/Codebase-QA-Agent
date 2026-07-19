@@ -1,93 +1,68 @@
 # Codebase QA Agent
 
-A local codebase question-answering agent built from a frontend-first learning path.
+一个面向本地代码仓库的智能问答 Agent。
 
-It can inspect a project with tools, run a multi-round agent loop, stream intermediate progress to the browser, and render the final answer, citations, and tool steps in a structured React UI.
+用户在前端输入自然语言问题后，系统会结合大模型与本地代码检索工具，对当前项目进行多轮分析，并将答案生成过程、工具调用轨迹、引用文件和最终结果实时展示在页面中。
 
-It also supports in-memory multi-turn conversation by session, plus a local conversation history sidebar in the frontend.
+这个项目不是“聊天框 + 模型接口”的简单拼接，而是一个包含工具调用、流式输出、会话持久化和可视化执行轨迹的完整 Agent Demo。
 
-## What This Project Does
+## 项目特点
 
-- Accepts natural language questions about the current codebase
-- Lets the model decide when to call tools
-- Supports four local tools:
-  - `list_files`
-  - `grep_files`
-  - `read_file`
-  - `read_multiple_files`
-- Runs a multi-round tool-calling loop until the model has enough information
-- Normalizes backend results into a stable frontend-friendly structure
-- Supports session-based continuous conversation in memory
-- Stores frontend conversation history in local storage
-- Streams:
-  - status updates
-  - answer text deltas
-  - tool step updates
-  - final normalized result
-- Renders:
-  - Markdown answer
-  - cited files
-  - step-by-step tool execution cards
-  - conversation history sidebar
+- 支持围绕本地代码仓库进行自然语言问答
+- 支持模型自主决定是否调用工具
+- 支持多轮 Agent 推理与工具调用循环
+- 支持答案内容逐段流式输出
+- 支持工具执行状态、参数、结果的可视化展示
+- 支持引用文件追踪，增强回答可解释性
+- 支持基于会话的连续追问
+- 支持历史会话持久化与回看
 
-## Why This Project Is Useful
+## 核心能力
 
-This is not just a chat box connected to a model API.
+当前项目内置了 4 个本地工具：
 
-It demonstrates several core AI agent engineering ideas:
+- `list_files`：列出目录下的文件结构
+- `grep_files`：搜索目录中的关键词匹配结果
+- `read_file`：读取单个文本文件内容
+- `read_multiple_files`：一次读取多个文件，便于横向对比分析
 
-- tool calling
-- multi-round agent loops
-- streaming answer output with SSE
-- backend result normalization
-- protocol conversion from model stream to UI event stream
-- frontend visualization of intermediate steps
-- source citation display for better answer traceability
-- session continuity across multiple user turns
+Agent 会根据用户问题决定是否需要先调用工具。当模型返回 `tool_calls` 后，后端执行工具，将结果回填到消息上下文中，再继续发起下一轮模型请求，直到模型具备足够信息输出最终回答。
 
-## Demo Flow
+## 项目架构
 
-1. The user enters a question in the browser.
-2. The frontend sends the question and `sessionId` to `POST /api/chat/stream`.
-3. The backend appends the new user turn to that session's `messages`.
-4. The model decides whether to answer directly or call tools.
-5. If tool calls are returned:
-   - the backend runs the tools
-   - pushes tool results back into the conversation
-   - records each tool step for the UI
-6. During execution, the backend streams:
-   - `status`
-   - `answer_delta`
-   - `step`
-   - `final`
-7. The frontend incrementally renders the answer and tool steps.
-8. When the model stops calling tools, the backend returns the final normalized result.
+### 后端
 
-## Tech Stack
+- `Express` 提供接口与 SSE 流式输出能力
+- `OpenAI-compatible Chat Completions API` 负责模型推理与工具调用
+- `Prisma + SQLite` 负责会话与消息持久化
+- `fast-glob` 和文件系统工具负责本地代码检索
 
-- Node.js
-- TypeScript
-- Express
-- Fast Glob
-- OpenAI-compatible Chat Completions API
-- React
-- Vite
-- SSE for streaming UI updates
+### 前端
 
-## Response Shape
+- `React + TypeScript` 构建交互界面
+- `Vite` 作为前端开发与构建工具
+- `react-markdown + remark-gfm` 渲染 Markdown 格式答案
 
-The backend returns a stable structure:
+## 工作流程
 
-```ts
-type ChatResponse = {
-  answer: string;
-  steps: Step[];
-  citations: Citation[];
-  error: string | null;
-};
-```
+1. 用户在前端输入问题。
+2. 前端调用 `POST /api/chat/stream`，携带 `message` 和 `sessionId`。
+3. 后端将本轮用户问题追加到当前会话消息中。
+4. 后端调用模型流式接口，并持续接收 `content` 与 `tool_calls` 增量。
+5. 若模型需要工具：
+   - 后端执行对应工具
+   - 将工具结果写回会话消息
+   - 向前端推送工具步骤和状态事件
+   - 继续进入下一轮模型调用
+6. 若模型已具备足够信息：
+   - 后端整理最终结果
+   - 返回标准化的 `answer / steps / citations / error`
+   - 将结果持久化到本地数据库
+7. 前端基于 SSE 逐步渲染答案、步骤和最终结果。
 
-The streaming endpoint emits frontend-oriented events such as:
+## 流式事件设计
+
+后端不会把原始模型协议直接暴露给前端，而是转换成更稳定的 UI 事件流：
 
 ```ts
 type StreamEvent =
@@ -99,108 +74,158 @@ type StreamEvent =
   | { type: "error"; error: string };
 ```
 
-This keeps the frontend simple and avoids exposing raw model protocol details directly to the UI.
+其中：
 
-## Project Structure
+- `answer_delta` 用于前端逐段拼接答案，实现“边生成边显示”
+- `answer_reset` 用于模型先输出解释、后决定调用工具时清空临时内容
+- `step` 用于展示工具调用轨迹
+- `final` 用于统一落库和渲染最终结果
+
+## 返回结果结构
+
+```ts
+type ChatResponse = {
+  answer: string;
+  steps: Step[];
+  citations: Citation[];
+  error: string | null;
+};
+```
+
+这种标准化结构可以让前端不必关心底层模型协议细节，只聚焦于渲染答案、证据和执行过程。
+
+## 会话与数据持久化
+
+项目已接入 `Prisma + SQLite`，本地会话并非只保存在内存中。
+
+当前会持久化的数据包括：
+
+- 会话标题
+- 用户最新提问
+- 最终答案
+- 工具执行步骤
+- 引用信息
+- 完整消息链路
+
+这使得项目具备以下能力：
+
+- 刷新页面后仍可查看历史会话
+- 支持按会话回看之前的问题与答案
+- 支持在已有上下文基础上继续追问
+
+## 前端展示内容
+
+前端页面主要包含 4 个区域：
+
+- 提问输入区：提交问题、显示当前会话状态
+- Answer 区：逐段渲染模型输出的最终回答
+- Citations 区：展示引用到的文件与证据
+- Steps 区：展示每一步工具调用的参数、结果与耗时
+
+其中 `Answer` 区的流式效果来自前端持续接收 `answer_delta` 事件，并将新内容追加到本地 `liveAnswerBuffer` 后再更新状态渲染。
+
+## 技术栈
+
+- Node.js
+- TypeScript
+- Express
+- OpenAI SDK
+- React
+- Vite
+- Prisma
+- SQLite
+- fast-glob
+- SSE
+
+## 项目结构
 
 ```txt
 src/
-  index.ts
-  lib/model.ts
-  agent/run-agent.ts
-  agent/run-tool.ts
-  agent/session-store.ts
-  tools/list-files.ts
-  tools/read-file.ts
-  tools/grep-files.ts
-  tools/normalizeResult.ts
-  tools/workspace.ts
+  index.ts                  # Express 服务入口
+  lib/
+    model.ts                # 模型流式调用与 tool_calls 合并
+    prisma.ts               # Prisma 客户端
+  agent/
+    run-agent.ts            # 多轮 Agent 调度主流程
+    run-tool.ts             # 工具执行分发
+    session-store.ts        # 会话持久化与历史读取
+  tools/
+    list-files.ts           # 列出文件
+    grep-files.ts           # 关键词检索
+    read-file.ts            # 读取文件
+    workspace.ts            # 工作目录处理
+    normalizeResult.ts      # 结果标准化
+
+prisma/
+  schema.prisma             # 数据库模型
+
 web/
-  index.html
   src/
     App.tsx
-    components/
-    hooks/
-    services/
-    types/
-public/
-  *.jpg / *.png assets for project explanation
+    hooks/useChatStream.ts  # 前端流式消费逻辑
+    services/chat.ts        # SSE 请求封装
+    components/             # 答案、步骤、历史侧边栏等组件
 ```
 
-## Local Setup
+## 本地运行
 
-1. Install dependencies
+### 1. 安装依赖
 
 ```bash
 npm install
 ```
 
-2. Create a `.env` file
+### 2. 配置环境变量
+
+在项目根目录创建 `.env` 文件：
 
 ```env
-AI_API_KEY=your_key
-AI_BASE_URL=your_base_url
+AI_API_KEY=your_api_key
+AI_BASE_URL=https://your-compatible-openai-base-url/v1
 AI_MODEL=your_model_name
+DATABASE_URL="file:./prisma/dev.db"
 ```
 
-3. Start the development server
+### 3. 启动开发环境
 
 ```bash
 npm run dev
 ```
 
-4. Open the React frontend in development
+默认会同时启动：
 
-```txt
-http://localhost:5173
+- 后端服务：`http://localhost:3001`
+- 前端开发服务：`http://localhost:5173`
+
+### 4. 类型检查
+
+```bash
+npm run typecheck
 ```
 
-5. Build both server and frontend
+### 5. 构建项目
 
 ```bash
 npm run build
 ```
 
-6. Start the production server
+### 6. 启动生产构建
 
 ```bash
 npm start
 ```
 
-7. Open the production app
+启动后可访问：
 
 ```txt
 http://localhost:3001
 ```
 
-## Example Questions
+## 可尝试的问题
 
-- List the files under `src` and summarize the structure
-- Read `src/agent/run-agent.ts` and explain how the loop works
-- Search for `tool_choice` in `src` and explain where it is used
-- Read `src/index.ts`, `src/lib/model.ts`, and `src/agent/run-agent.ts` together and explain the streaming flow
-- Ask a follow-up question in the same session and observe that the agent remembers prior turns
-
-## Resume-Friendly Highlights
-
-- Built a codebase QA agent with multi-round tool calling over a local project
-- Implemented file listing, keyword search, and file reading tools for codebase exploration
-- Designed a backend normalization layer that returns answer, citations, and step metadata in a stable structure
-- Converted raw model streaming output into frontend-oriented SSE events for answer, status, and step visualization
-- Built a React frontend with Markdown rendering, cited file cards, step visualization, and conversation history
-- Added in-memory session-based conversation continuity across multiple user turns
-
-## Current Limitations
-
-- No database-backed conversation persistence yet
-- No semantic retrieval or vector search yet
-- No approval workflow for sensitive actions yet
-- Conversation history currently lives only in browser local storage
-- Session memory is in-memory only and resets when the server restarts
-
-## Good Next Steps
-
-- Add database-backed session persistence
-- Add semantic retrieval or lightweight indexing
-- Add conversation summarization or context trimming for very long chats
-- Add recording, screenshots, and architecture diagrams for portfolio use
+- 请梳理一下 `src` 目录的整体结构
+- 解释 `src/agent/run-agent.ts` 的多轮循环逻辑
+- 搜索 `tool_choice` 的使用位置并说明作用
+- 结合 `src/index.ts`、`src/lib/model.ts`、`web/src/hooks/useChatStream.ts` 说明流式输出是怎么实现的
+- 说明 Answer 区为什么能够保持前后内容连续
+- 查看历史会话的持久化逻辑在哪
