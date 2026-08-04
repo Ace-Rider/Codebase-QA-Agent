@@ -10,21 +10,26 @@ type ToolArgs = {
     filePath?: string;
     filePaths?: string[];
     query?: string;
+    offset?: number;
+    limit?: number;
 };
 
 export async function runTool(name: string, args: ToolArgs) {
     switch (name) {
         case "list_files": {
             const rootDir = args.rootDir ?? DEFAULT_ROOT;
-            const files = await listFiles(rootDir);
-            return { files };
+            // listFiles 已返回 { files, total, truncated }，直接透传
+            return await listFiles(rootDir);
         }
 
         case "read_file": {
             if (!args.filePath) {
                 throw new Error("No file path provided");
             }
-            const content = await readFileContent(args.filePath);
+            const content = await readFileContent(args.filePath, {
+                offset: args.offset,
+                limit: args.limit,
+            });
             return { content };
         }
 

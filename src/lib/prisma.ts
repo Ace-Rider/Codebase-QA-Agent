@@ -48,7 +48,32 @@ function initializeDatabase(database: Database.Database) {
 
         CREATE INDEX IF NOT EXISTS "Message_conversationId_sortOrder_idx"
         ON "Message" ("conversationId", "sortOrder");
+
+        CREATE TABLE IF NOT EXISTS "Turn" (
+            "id" TEXT NOT NULL PRIMARY KEY,
+            "conversationId" TEXT NOT NULL,
+            "question" TEXT NOT NULL,
+            "answer" TEXT NOT NULL DEFAULT '',
+            "error" TEXT,
+            "stepsJson" TEXT NOT NULL DEFAULT '[]',
+            "citationsJson" TEXT NOT NULL DEFAULT '[]',
+            "tokenUsageJson" TEXT,
+            "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "Turn_conversationId_fkey"
+                FOREIGN KEY ("conversationId") REFERENCES "Conversation" ("id")
+                ON DELETE CASCADE ON UPDATE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS "Turn_conversationId_createdAt_idx"
+        ON "Turn" ("conversationId", "createdAt");
     `);
+
+    // 旧库升级：给已存在的 Turn 表补 tokenUsageJson 列
+    const turnColumns = database.prepare("PRAGMA table_info('Turn')").all() as Array<{ name: string }>;
+
+    if (!turnColumns.some((column) => column.name === "tokenUsageJson")) {
+        database.exec('ALTER TABLE "Turn" ADD COLUMN "tokenUsageJson" TEXT;');
+    }
 }
 
 function ensureDatabase(databaseFilePath: string) {

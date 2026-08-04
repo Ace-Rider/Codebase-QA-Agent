@@ -9,12 +9,30 @@ type GrepMatch = {
     lineText: string;
 };
 
+const IGNORE_PATTERNS = [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/out/**",
+    "**/coverage/**",
+    "**/.git/**",
+    "**/.idea/**",
+    "**/.vscode/**",
+    "**/dev.db",
+    "**/package-lock.json",
+    "**/*.{png,jpg,jpeg,gif,webp,ico,pdf,zip}",
+];
+
+const MAX_MATCHES = 50;
+
 export async function grepFiles(rootDir: string, query: string) {
     const cwd = resolveCodebaseRoot(rootDir);
-    const files = await fg(["**/*.{ts,tsx,js,jsx,json,md}"], {
+    const files = await fg(["**/*.{ts,tsx,js,jsx,json,md,css,html}"], {
         cwd,
         onlyFiles: true,
         dot: false,
+        ignore: IGNORE_PATTERNS,
+        suppressErrors: true,
     });
 
     const results: GrepMatch[] = [];
@@ -42,5 +60,5 @@ export async function grepFiles(rootDir: string, query: string) {
         });
     }
 
-    return results.slice(0, 50);
+    return results.slice(0, MAX_MATCHES);
 }

@@ -9,6 +9,8 @@ web/dist/
 # Local database
 prisma/*.db
 prisma/*.db-journal
+prisma/*.db-shm
+prisma/*.db-wal
 
 # OS / editor temp files
 Thumbs.db

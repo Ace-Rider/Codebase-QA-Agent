@@ -1,4 +1,4 @@
-import type { Conversation, Message } from "@prisma/client";
+import type { Conversation, Message, Turn } from "@prisma/client";
 import type { ChatResponse } from "./run-agent.js";
 import { createMessagesForTurn } from "./run-agent.js";
 import { prisma } from "../lib/prisma.js";
@@ -17,8 +17,36 @@ export type ConversationHistoryItem = {
     isPending?: boolean;
 };
 
+export type TurnHistoryItem = {
+    id: string;
+    question: string;
+    answer: string;
+    steps: ChatResponse["steps"];
+    citations: ChatResponse["citations"];
+    error: string | null;
+    token_usage: ChatResponse["token_usage"];
+    createdAt: string;
+};
+
+export type ConversationDetail = {
+    id: string;
+    title: string;
+    createdAt: string;
+    updatedAt: string;
+    turns: TurnHistoryItem[];
+};
+
+export type SessionTurnContext = {
+    messages: ChatMessage[];
+    savedMessageCount: number;
+};
+
 type ConversationWithMessages = Conversation & {
     messages: Message[];
+};
+
+type ConversationWithTurns = Conversation & {
+    turns: Turn[];
 };
 
 function buildConversationTitle(message: string) {
@@ -54,6 +82,33 @@ function toHistoryItem(conversation: Conversation): ConversationHistoryItem {
         error: conversation.error,
         createdAt: conversation.createdAt.toISOString(),
         updatedAt: conversation.updatedAt.toISOString(),
+    };
+}
+
+function toTurnHistoryItem(turn: Turn): TurnHistoryItem {
+    return {
+        id: turn.id,
+        question: turn.question,
+        answer: turn.answer,
+        steps: parseJson(turn.stepsJson, []),
+        citations: parseJson(turn.citationsJson, []),
+        error: turn.error,
+        token_usage: turn.tokenUsageJson ? parseJson(turn.tokenUsageJson, null) : null,
+        createdAt: turn.createdAt.toISOString(),
+    };
+}
+
+function toMessageData(conversationId: string, message: ChatMessage, sortOrder: number) {
+    return {
+        conversationId,
+        role: message.role,
+        content: message.content,
+        toolCallId: message.role === "tool" ? message.tool_call_id : null,
+        toolCallsJson:
+            message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0
+                ? JSON.stringify(message.tool_calls)
+                : null,
+        sortOrder,
     };
 }
 
@@ -113,10 +168,11 @@ async function loadConversation(sessionId: string): Promise<ConversationWithMess
     });
 }
 
-export async function createSessionTurn(sessionId: string, userMessage: string) {
+export async function createSessionTurn(sessionId: string, userMessage: string): Promise<SessionTurnContext> {
     const conversation = await loadConversation(sessionId);
     const previousMessages = conversation ? toChatMessages(conversation.messages) : undefined;
     const nextMessages = createMessagesForTurn(previousMessages, userMessage);
+    const savedMessageCount = (conversation?.messages.length ?? 0) + 1;
 
     await prisma.$transaction(async (tx) => {
         await tx.conversation.upsert({
@@ -126,54 +182,53 @@ export async function createSessionTurn(sessionId: string, userMessage: string) 
                 title: buildConversationTitle(userMessage),
                 message: userMessage,
             },
+            // 标题只在创建时生成，追加轮次时不覆盖
             update: {
                 message: userMessage,
             },
         });
 
-        await tx.message.deleteMany({
-            where: { conversationId: sessionId },
+        await tx.message.create({
+            data: toMessageData(
+                sessionId,
+                {
+                    role: "user",
+                    content: userMessage,
+                },
+                savedMessageCount - 1,
+            ),
         });
-
-        if (nextMessages.length > 0) {
-            await tx.message.createMany({
-                data: nextMessages.map((message, index) => ({
-                    conversationId: sessionId,
-                    role: message.role,
-                    content: message.content,
-                    toolCallId: message.role === "tool" ? message.tool_call_id : null,
-                    toolCallsJson:
-                        message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0
-                            ? JSON.stringify(message.tool_calls)
-                            : null,
-                    sortOrder: index,
-                })),
-            });
-        }
     });
 
-    return nextMessages;
+    return { messages: nextMessages, savedMessageCount };
 }
 
 export async function saveSessionTurn(
     sessionId: string,
     userMessage: string,
-    messages: ChatMessage[],
+    context: SessionTurnContext,
     result: ChatResponse,
 ) {
+    const { messages, savedMessageCount } = context;
+    const newMessages = messages.slice(savedMessageCount);
+
     await prisma.$transaction(async (tx) => {
-        await tx.conversation.upsert({
+        await tx.turn.create({
+            data: {
+                conversationId: sessionId,
+                question: userMessage,
+                answer: result.answer,
+                error: result.error,
+                stepsJson: JSON.stringify(result.steps),
+                citationsJson: JSON.stringify(result.citations),
+                tokenUsageJson: result.token_usage ? JSON.stringify(result.token_usage) : null,
+            },
+        });
+
+        // Conversation 上的 message/answer 字段仅用于侧边栏展示最近一轮
+        await tx.conversation.update({
             where: { id: sessionId },
-            create: {
-                id: sessionId,
-                title: buildConversationTitle(userMessage),
-                message: userMessage,
-                answer: result.answer,
-                error: result.error,
-                stepsJson: JSON.stringify(result.steps),
-                citationsJson: JSON.stringify(result.citations),
-            },
-            update: {
+            data: {
                 message: userMessage,
                 answer: result.answer,
                 error: result.error,
@@ -182,23 +237,11 @@ export async function saveSessionTurn(
             },
         });
 
-        await tx.message.deleteMany({
-            where: { conversationId: sessionId },
-        });
-
-        if (messages.length > 0) {
+        if (newMessages.length > 0) {
             await tx.message.createMany({
-                data: messages.map((message, index) => ({
-                    conversationId: sessionId,
-                    role: message.role,
-                    content: message.content,
-                    toolCallId: message.role === "tool" ? message.tool_call_id : null,
-                    toolCallsJson:
-                        message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0
-                            ? JSON.stringify(message.tool_calls)
-                            : null,
-                    sortOrder: index,
-                })),
+                data: newMessages.map((message, index) =>
+                    toMessageData(sessionId, message, savedMessageCount + index),
+                ),
             });
         }
     });
@@ -215,10 +258,47 @@ export async function listConversations(limit = 12) {
     return conversations.map(toHistoryItem);
 }
 
-export async function getConversationById(sessionId: string) {
-    const conversation = await prisma.conversation.findUnique({
+export async function deleteConversation(sessionId: string) {
+    // Message/Turn 都配置了 ON DELETE CASCADE，删主表即可
+    const deleted = await prisma.conversation.deleteMany({
         where: { id: sessionId },
     });
 
-    return conversation ? toHistoryItem(conversation) : null;
+    return deleted.count > 0;
+}
+
+export async function renameConversation(sessionId: string, title: string) {
+    const updated = await prisma.conversation.update({
+        where: { id: sessionId },
+        data: { title },
+    });
+
+    return toHistoryItem(updated);
+}
+
+export async function getConversationDetail(sessionId: string): Promise<ConversationDetail | null> {
+    const conversation = await prisma.conversation.findUnique({
+        where: { id: sessionId },
+        include: {
+            turns: {
+                orderBy: {
+                    createdAt: "asc",
+                },
+            },
+        },
+    });
+
+    if (!conversation) {
+        return null;
+    }
+
+    const withTurns = conversation as ConversationWithTurns;
+
+    return {
+        id: withTurns.id,
+        title: withTurns.title,
+        createdAt: withTurns.createdAt.toISOString(),
+        updatedAt: withTurns.updatedAt.toISOString(),
+        turns: withTurns.turns.map(toTurnHistoryItem),
+    };
 }

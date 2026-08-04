@@ -23,9 +23,18 @@ export type ModelToolCall = {
     };
 };
 
+export type TokenUsage = {
+    prompt_tokens: number;
+    completion_tokens: number;
+};
+
 export type AssistantMessage = {
     content: string;
     tool_calls: ModelToolCall[];
+    /** 流被中止时为 true，content 是已生成的部分 */
+    aborted?: boolean | undefined;
+    /** 模型返回的用量信息（部分供应商在流的最后一个分片携带） */
+    usage?: TokenUsage | undefined;
 };
 
 const tools = [
@@ -48,11 +57,20 @@ const tools = [
         type: "function",
         function: {
             name: "read_file",
-            description: "Read the content of a text file.",
+            description:
+                "Read the content of a text file. For large files, pass offset/limit to read a line range instead of the whole file.",
             parameters: {
                 type: "object",
                 properties: {
                     filePath: { type: "string", description: "Absolute or relative file path" },
+                    offset: {
+                        type: "integer",
+                        description: "1-based line number to start reading from (use with grep results)",
+                    },
+                    limit: {
+                        type: "integer",
+                        description: "Number of lines to read (default 100, max 400)",
+                    },
                 },
                 required: ["filePath"],
                 additionalProperties: false,
@@ -100,7 +118,7 @@ type StreamHandlers = {
     onContentDelta?: (delta: string) => void | Promise<void>;
 };
 
-function createRequestBody(messages: ChatMessage[]) {
+function createRequestBody(messages: ChatMessage[], includeUsage: boolean) {
     return {
         model,
         messages,
@@ -108,18 +126,29 @@ function createRequestBody(messages: ChatMessage[]) {
         tool_choice: "auto",
         temperature: 0.2,
         stream: true,
+        // 让供应商在流的最后一个分片携带 usage 统计；个别网关不认识时降级重试
+        ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
     };
 }
 
-async function requestModelStream(messages: ChatMessage[]) {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(createRequestBody(messages)),
-    });
+async function requestModelStream(messages: ChatMessage[], signal?: AbortSignal) {
+    const sendRequest = (includeUsage: boolean) =>
+        fetch(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(createRequestBody(messages, includeUsage)),
+            ...(signal ? { signal } : {}),
+        });
+
+    let response = await sendRequest(true);
+
+    if (response.status === 400) {
+        // 可能是网关不支持 stream_options：去掉该参数重试一次
+        response = await sendRequest(false);
+    }
 
     if (!response.ok) {
         const errorText = await response.text();
@@ -181,11 +210,30 @@ function getChunkPayload(chunk: string) {
     return dataLines.join("\n");
 }
 
+function parseChunkPayload(payload: string) {
+    try {
+        return JSON.parse(payload) as unknown;
+    } catch {
+        // 丢弃无法解析的分片，避免单个坏分片导致整次请求失败
+        return null;
+    }
+}
+
 export async function callModelWithToolsStream(
     messages: ChatMessage[],
     handlers: StreamHandlers = {},
+    signal?: AbortSignal,
 ): Promise<AssistantMessage> {
-    const response = await requestModelStream(messages);
+    let response: Response;
+
+    try {
+        response = await requestModelStream(messages, signal);
+    } catch (error) {
+        if (signal?.aborted) {
+            return { content: "", tool_calls: [], aborted: true };
+        }
+        throw error;
+    }
 
     if (!response.body) {
         throw new Error("model stream body is not available");
@@ -196,49 +244,78 @@ export async function callModelWithToolsStream(
     let buffer = "";
     let content = "";
     const toolCalls: ModelToolCall[] = [];
+    let usage: TokenUsage | undefined;
 
-    while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    try {
+        while (true) {
+            const { value, done } = await reader.read();
+            buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
 
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
+            const chunks = buffer.split("\n\n");
+            buffer = chunks.pop() ?? "";
 
-        for (const chunk of chunks) {
-            const payload = getChunkPayload(chunk);
+            for (const chunk of chunks) {
+                const payload = getChunkPayload(chunk);
 
-            if (!payload) {
-                continue;
+                if (!payload) {
+                    continue;
+                }
+
+                if (payload === "[DONE]") {
+                    return {
+                        content,
+                        tool_calls: finalizeToolCalls(toolCalls),
+                        usage,
+                    };
+                }
+
+                const data = parseChunkPayload(payload);
+
+                if (!data || typeof data !== "object") {
+                    continue;
+                }
+
+                // OpenAI 兼容流：开启 include_usage 后最后一个分片会带 usage 统计
+                const chunkUsage = (data as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } })
+                    ?.usage;
+
+                if (chunkUsage && typeof chunkUsage === "object") {
+                    const promptTokens = Number(chunkUsage.prompt_tokens);
+                    const completionTokens = Number(chunkUsage.completion_tokens);
+
+                    if (Number.isFinite(promptTokens) && Number.isFinite(completionTokens)) {
+                        usage = { prompt_tokens: promptTokens, completion_tokens: completionTokens };
+                    }
+                }
+
+                const choice = (data as { choices?: Array<{ delta?: { content?: unknown; tool_calls?: unknown } }> })
+                    ?.choices?.[0];
+                const delta = choice?.delta ?? {};
+
+                if (typeof delta?.content === "string" && delta.content) {
+                    content += delta.content;
+                    await handlers.onContentDelta?.(delta.content);
+                }
+
+                if (Array.isArray(delta?.tool_calls)) {
+                    mergeToolCallDelta(toolCalls, delta.tool_calls as any[]);
+                }
             }
 
-            if (payload === "[DONE]") {
-                return {
-                    content,
-                    tool_calls: finalizeToolCalls(toolCalls),
-                };
-            }
-
-            const data = JSON.parse(payload);
-            const choice = data?.choices?.[0];
-            const delta = choice?.delta ?? {};
-
-            if (typeof delta?.content === "string" && delta.content) {
-                content += delta.content;
-                await handlers.onContentDelta?.(delta.content);
-            }
-
-            if (Array.isArray(delta?.tool_calls)) {
-                mergeToolCallDelta(toolCalls, delta.tool_calls);
+            if (done) {
+                break;
             }
         }
-
-        if (done) {
-            break;
+    } catch (error) {
+        if (signal?.aborted) {
+            return { content, tool_calls: [], aborted: true, usage };
         }
+        throw error;
     }
 
     return {
         content,
         tool_calls: finalizeToolCalls(toolCalls),
+        usage,
     };
 }

@@ -171,21 +171,28 @@ function buildReadPreview(content: string): FormattedResult {
 }
 
 function formatListResult(result: unknown): FormattedResult {
-    const files = (result as { files?: string[] })?.files ?? [];
+    const listResult = result as { files?: string[]; total?: number; truncated?: boolean };
+    const files = listResult?.files ?? [];
 
     if (!Array.isArray(files) || files.length === 0) {
         return { text: "没有找到文件。" };
     }
+
+    const totalCount = typeof listResult?.total === "number" ? listResult.total : files.length;
 
     const preview = files
         .slice(0, 20)
         .map((file) => `- ${file}`)
         .join("\n");
 
-    const suffix = files.length > 20 ? `\n...以及另外 ${files.length - 20} 个文件` : "";
+    const hiddenCount = files.length - 20;
+    const suffix =
+        hiddenCount > 0
+            ? `\n...以及另外 ${hiddenCount} 个文件${listResult?.truncated ? `（共 ${totalCount} 个，已截断）` : ""}`
+            : "";
 
     return {
-        text: `${files.length} 个文件\n${preview}${suffix}`,
+        text: `${totalCount} 个文件\n${preview}${suffix}`,
     };
 }
 
