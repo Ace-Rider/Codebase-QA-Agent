@@ -1,4 +1,4 @@
-import type { ConversationHistoryItem, StreamEvent } from "../types/chat";
+import type { ConversationDetail, ConversationHistoryItem, FilePreview, StreamEvent } from "../types/chat";
 
 async function readErrorMessage(response: Response) {
     let errorMessage = `request failed: ${response.status}`;
@@ -27,14 +27,33 @@ export function fetchConversationHistory() {
     return requestJson<ConversationHistoryItem[]>("/api/conversations");
 }
 
-export function fetchConversation(sessionId: string) {
-    return requestJson<ConversationHistoryItem>(`/api/conversations/${encodeURIComponent(sessionId)}`);
+export function fetchConversationDetail(sessionId: string) {
+    return requestJson<ConversationDetail>(`/api/conversations/${encodeURIComponent(sessionId)}`);
+}
+
+export function deleteConversationRequest(sessionId: string) {
+    return requestJson<{ ok: boolean }>(`/api/conversations/${encodeURIComponent(sessionId)}`, {
+        method: "DELETE",
+    });
+}
+
+export function renameConversationRequest(sessionId: string, title: string) {
+    return requestJson<ConversationHistoryItem>(`/api/conversations/${encodeURIComponent(sessionId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+    });
+}
+
+export function fetchFilePreview(filePath: string) {
+    return requestJson<FilePreview>(`/api/files?path=${encodeURIComponent(filePath)}`);
 }
 
 export async function requestChatStream(
     message: string,
     sessionId: string,
     onEvent: (event: StreamEvent) => void,
+    signal?: AbortSignal,
 ) {
     const response = await fetch("/api/chat/stream", {
         method: "POST",
@@ -42,6 +61,7 @@ export async function requestChatStream(
             "Content-Type": "application/json",
         },
         body: JSON.stringify({ message, sessionId }),
+        ...(signal ? { signal } : {}),
     });
 
     if (!response.ok) {

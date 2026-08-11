@@ -22,11 +22,32 @@ export type Citation = {
     reason?: string;
 };
 
+export type TokenUsageSummary = {
+    /** 最后一轮请求的上下文规模（prompt tokens） */
+    prompt_tokens: number;
+    /** 本轮全部生成消耗（completion tokens，跨迭代累计） */
+    completion_tokens: number;
+};
+
 export type ChatResponse = {
     answer: string;
     steps: Step[];
     citations: Citation[];
     error: string | null;
+    token_usage?: TokenUsageSummary | null;
+};
+
+/** 对话中的一次问答轮次（用户提问 + Agent 回答） */
+export type ChatTurn = {
+    id: string;
+    question: string;
+    answer: string;
+    steps: Step[];
+    citations: Citation[];
+    error: string | null;
+    token_usage?: TokenUsageSummary | null;
+    createdAt?: string;
+    isStreaming?: boolean;
 };
 
 export type ConversationHistoryItem = {
@@ -40,6 +61,19 @@ export type ConversationHistoryItem = {
     createdAt?: string;
     updatedAt: string;
     isPending?: boolean;
+};
+
+export type ConversationDetail = {
+    id: string;
+    title: string;
+    createdAt: string;
+    updatedAt: string;
+    turns: ChatTurn[];
+};
+
+export type FilePreview = {
+    path: string;
+    content: string;
 };
 
 export type StreamEvent =

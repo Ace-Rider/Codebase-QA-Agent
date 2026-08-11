@@ -3,7 +3,7 @@ import type { Step } from "../types/chat";
 
 type StepsPanelProps = {
     steps: Step[];
-    isLoading: boolean;
+    isStreaming: boolean;
     selectedEvidencePath: string | null;
 };
 
@@ -214,9 +214,10 @@ function StepCard({ step, displayIndex, isLatest, animate, highlighted }: StepCa
     );
 }
 
-export function StepsPanel({ steps, isLoading, selectedEvidencePath }: StepsPanelProps) {
+export function StepsPanel({ steps, isStreaming, selectedEvidencePath }: StepsPanelProps) {
     const previousCountRef = useRef(0);
     const [animatedIndex, setAnimatedIndex] = useState<number | null>(null);
+    const [expanded, setExpanded] = useState(() => isStreaming);
     const stepRefs = useRef<Array<HTMLDivElement | null>>([]);
     const lastScrolledPathRef = useRef<string | null>(null);
     const relatedStepIndex = useMemo(
@@ -224,6 +225,12 @@ export function StepsPanel({ steps, isLoading, selectedEvidencePath }: StepsPane
         [steps, selectedEvidencePath],
     );
     const stepGroups = useMemo(() => groupStepsByIteration(steps), [steps]);
+
+    useEffect(() => {
+        if (isStreaming) {
+            setExpanded(true);
+        }
+    }, [isStreaming]);
 
     useEffect(() => {
         if (steps.length === 0) {
@@ -262,77 +269,90 @@ export function StepsPanel({ steps, isLoading, selectedEvidencePath }: StepsPane
             return;
         }
 
-        stepRefs.current[relatedStepIndex]?.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-        });
+        setExpanded(true);
+
+        const timeout = window.setTimeout(() => {
+            stepRefs.current[relatedStepIndex]?.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+            });
+        }, 80);
 
         lastScrolledPathRef.current = selectedEvidencePath;
+
+        return () => {
+            window.clearTimeout(timeout);
+        };
     }, [relatedStepIndex, selectedEvidencePath]);
 
+    if (steps.length === 0 && !isStreaming) {
+        return null;
+    }
+
     return (
-        <section className="panel section-panel">
-            <div className="section-head">
-                <div>
-                    <div className="panel-kicker">Trace</div>
-                    <h2>执行轨迹</h2>
-                </div>
-                <div className="panel-counter">{steps.length} 步</div>
-            </div>
+        <section className={["turn-section", expanded ? "turn-section-open" : ""].filter(Boolean).join(" ")}>
+            <button className="turn-section-head" type="button" onClick={() => setExpanded((value) => !value)}>
+                <span className="turn-section-title">执行轨迹</span>
+                <span className="turn-section-meta">{steps.length} 步</span>
+                {isStreaming ? <span className="turn-section-live">执行中</span> : null}
+                <span className="turn-section-toggle">{expanded ? "收起" : "展开"}</span>
+            </button>
 
-            {steps.length === 0 ? (
-                <div className="empty-state">
-                    {isLoading ? "正在等待工具调用..." : "还没有工具执行记录。"}
-                </div>
-            ) : (
-                <div className="trace-groups">
-                    {stepGroups.map((group) => {
-                        const isActiveGroup =
-                            relatedStepIndex !== -1 &&
-                            group.items.some((item) => item.originalIndex === relatedStepIndex);
-                        const isLatestGroup =
-                            isLoading && group.items.some((item) => item.originalIndex === steps.length - 1);
+            {expanded ? (
+                <div className="turn-section-body">
+                    {steps.length === 0 ? (
+                        <div className="empty-state">{isStreaming ? "正在等待工具调用..." : "还没有工具执行记录。"}</div>
+                    ) : (
+                        <div className="trace-groups">
+                            {stepGroups.map((group) => {
+                                const isActiveGroup =
+                                    relatedStepIndex !== -1 &&
+                                    group.items.some((item) => item.originalIndex === relatedStepIndex);
+                                const isLatestGroup =
+                                    isStreaming && group.items.some((item) => item.originalIndex === steps.length - 1);
 
-                        return (
-                            <section
-                                key={`iteration-${group.iteration}`}
-                                className={["trace-group", isActiveGroup ? "trace-group-active" : ""]
-                                    .filter(Boolean)
-                                    .join(" ")}
-                            >
-                                <div className="trace-group-head">
-                                    <div className="trace-group-title">
-                                        <span className="trace-group-badge">第 {group.iteration} 轮</span>
-                                        <span className="trace-group-note">{group.items.length} 个步骤</span>
-                                        {isActiveGroup ? <span className="trace-group-linked">已定位</span> : null}
-                                    </div>
-                                    {isLatestGroup ? <span className="trace-group-live">本轮进行中</span> : null}
-                                </div>
-
-                                <div className="trace-list">
-                                    {group.items.map(({ step, originalIndex }) => (
-                                        <div
-                                            key={`${step.iteration}-${step.tool_name}-${step.duration_ms}-${originalIndex}`}
-                                            className="trace-anchor"
-                                            ref={(node) => {
-                                                stepRefs.current[originalIndex] = node;
-                                            }}
-                                        >
-                                            <StepCard
-                                                step={step}
-                                                displayIndex={originalIndex}
-                                                isLatest={isLoading && originalIndex === steps.length - 1}
-                                                animate={animatedIndex === originalIndex}
-                                                highlighted={originalIndex === relatedStepIndex}
-                                            />
+                                return (
+                                    <section
+                                        key={`iteration-${group.iteration}`}
+                                        className={["trace-group", isActiveGroup ? "trace-group-active" : ""]
+                                            .filter(Boolean)
+                                            .join(" ")}
+                                    >
+                                        <div className="trace-group-head">
+                                            <div className="trace-group-title">
+                                                <span className="trace-group-badge">第 {group.iteration} 轮</span>
+                                                <span className="trace-group-note">{group.items.length} 个步骤</span>
+                                                {isActiveGroup ? <span className="trace-group-linked">已定位</span> : null}
+                                            </div>
+                                            {isLatestGroup ? <span className="trace-group-live">本轮进行中</span> : null}
                                         </div>
-                                    ))}
-                                </div>
-                            </section>
-                        );
-                    })}
+
+                                        <div className="trace-list">
+                                            {group.items.map(({ step, originalIndex }) => (
+                                                <div
+                                                    key={`${step.iteration}-${step.tool_name}-${step.duration_ms}-${originalIndex}`}
+                                                    className="trace-anchor"
+                                                    ref={(node) => {
+                                                        stepRefs.current[originalIndex] = node;
+                                                    }}
+                                                >
+                                                    <StepCard
+                                                        step={step}
+                                                        displayIndex={originalIndex}
+                                                        isLatest={isStreaming && originalIndex === steps.length - 1}
+                                                        animate={animatedIndex === originalIndex}
+                                                        highlighted={originalIndex === relatedStepIndex}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
-            )}
+            ) : null}
         </section>
     );
 }

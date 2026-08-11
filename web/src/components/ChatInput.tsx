@@ -1,16 +1,17 @@
-import type { KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import type { ConversationHistoryItem } from "../types/chat";
 
 type ChatInputProps = {
     value: string;
     onChange: (value: string) => void;
     onSend: () => void;
-    disabled: boolean;
+    onStop: () => void;
+    isLoading: boolean;
     status: string;
     activeSession: ConversationHistoryItem | null;
 };
 
-const EXAMPLES = [
+export const EXAMPLE_SUGGESTIONS = [
     {
         title: "理解项目结构",
         description: "列出 src 目录下的关键文件，并总结模块分层。",
@@ -28,32 +29,31 @@ const EXAMPLES = [
     },
 ];
 
-function buildSessionStatus(activeSession: ConversationHistoryItem | null) {
+function buildSessionHint(activeSession: ConversationHistoryItem | null) {
     if (!activeSession) {
-        return {
-            label: "新会话",
-            title: "下一次发送将开启全新会话",
-            description: "如果你想延续上下文，先去最近会话里选中一条历史会话。",
-        };
+        return "新会话";
     }
 
     if (activeSession.isPending) {
-        return {
-            label: "当前会话",
-            title: activeSession.title,
-            description: "这次提问会继续当前会话，并把新的分析结果接在这条会话后面。",
-        };
+        return "当前会话";
     }
 
-    return {
-        label: "继续追问",
-        title: activeSession.title,
-        description: "你现在发送的新问题，会沿用这条会话之前的上下文继续分析。",
-    };
+    return "继续追问";
 }
 
-export function ChatInput({ value, onChange, onSend, disabled, status, activeSession }: ChatInputProps) {
-    const sessionStatus = buildSessionStatus(activeSession);
+export function ChatInput({ value, onChange, onSend, onStop, isLoading, status, activeSession }: ChatInputProps) {
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    useEffect(() => {
+        const element = textareaRef.current;
+
+        if (!element) {
+            return;
+        }
+
+        element.style.height = "auto";
+        element.style.height = `${Math.min(element.scrollHeight, 180)}px`;
+    }, [value]);
 
     function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
         if (event.key !== "Enter" || event.shiftKey) {
@@ -62,55 +62,45 @@ export function ChatInput({ value, onChange, onSend, disabled, status, activeSes
 
         event.preventDefault();
 
-        if (!disabled && value.trim()) {
+        if (!isLoading && value.trim()) {
             onSend();
         }
     }
 
     return (
-        <section className="panel sidebar-panel">
-            <div className="sidebar-card current-session-card">
-                <div className="current-session-top">
-                    <span className="panel-kicker panel-kicker-quiet">{sessionStatus.label}</span>
+        <section className="composer">
+            <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="接着问，灯还亮着"
+                rows={1}
+            />
+
+            <div className="composer-foot">
+                <div className="composer-status">
+                    <span className="status-dot" />
+                    <span className="composer-status-text">{status}</span>
+                    <span className="composer-session-chip">{buildSessionHint(activeSession)}</span>
                 </div>
-                <strong className="current-session-title">{sessionStatus.title}</strong>
-                <p className="current-session-description">{sessionStatus.description}</p>
-            </div>
 
-            <div className="sidebar-card">
-                <div className="input-label">Prompt</div>
-                <textarea
-                    value={value}
-                    onChange={(event) => onChange(event.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="例如：读取 src/agent/run-agent.ts，并解释为什么要多轮 loop 才能完成工具调用"
-                />
-            </div>
-
-            <button className="submit-btn" type="button" onClick={onSend} disabled={disabled}>
-                {disabled ? "正在分析..." : "开始分析"}
-            </button>
-
-            <div className="sidebar-card">
-                <div className="input-label">Quick Tasks</div>
-                <div className="quick-list">
-                    {EXAMPLES.map((example) => (
-                        <button
-                            key={example.title}
-                            className="quick-item"
-                            type="button"
-                            onClick={() => onChange(example.prompt)}
-                        >
-                            <strong>{example.title}</strong>
-                            <span>{example.description}</span>
+                <div className="composer-actions">
+                    {isLoading ? (
+                        <button className="stop-btn" type="button" onClick={onStop}>
+                            停止生成
                         </button>
-                    ))}
+                    ) : (
+                        <button
+                            className="submit-btn"
+                            type="button"
+                            onClick={onSend}
+                            disabled={!value.trim()}
+                        >
+                            发送
+                        </button>
+                    )}
                 </div>
-            </div>
-
-            <div className="status-strip">
-                <span className="status-dot" />
-                <span>{status}</span>
             </div>
         </section>
     );

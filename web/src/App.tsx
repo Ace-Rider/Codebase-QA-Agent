@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { AnswerPanel } from "./components/AnswerPanel";
-import { ChatInput } from "./components/ChatInput";
-import { CitationsPanel } from "./components/CitationsPanel";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChatInput, EXAMPLE_SUGGESTIONS } from "./components/ChatInput";
 import { HistorySidebar } from "./components/HistorySidebar";
-import { StepsPanel } from "./components/StepsPanel";
+import { MessageThread } from "./components/MessageThread";
 import { useChatStream } from "./hooks/useChatStream";
 import type { ConversationHistoryItem } from "./types/chat";
 
@@ -11,14 +9,13 @@ const AUTO_FOLLOW_BOTTOM_OFFSET = 140;
 
 export default function App() {
     const [message, setMessage] = useState("");
-    const [showBackToTop, setShowBackToTop] = useState(false);
     const [selectedEvidencePath, setSelectedEvidencePath] = useState<string | null>(null);
     const [historyOpen, setHistoryOpen] = useState(false);
+    const [isNearBottom, setIsNearBottom] = useState(true);
+    const scrollRef = useRef<HTMLElement | null>(null);
     const shouldAutoFollowRef = useRef(true);
     const {
-        answer,
-        citations,
-        steps,
+        turns,
         status,
         isLoading,
         historyItems,
@@ -26,33 +23,54 @@ export default function App() {
         restoreHistory,
         startNewSession,
         sendMessage,
+        stopGeneration,
+        deleteHistoryItem,
+        renameHistoryItem,
     } = useChatStream();
 
     const activeSession =
         activeHistoryId !== null ? historyItems.find((item) => item.id === activeHistoryId) ?? null : null;
 
-    function isNearPageBottom() {
-        return window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - AUTO_FOLLOW_BOTTOM_OFFSET;
+    const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
+    const lampState = isLoading ? "lamp-working" : lastTurn?.error ? "lamp-error" : "";
+
+    const allCitations = useMemo(() => turns.flatMap((turn) => turn.citations), [turns]);
+
+    function isNearThreadBottom() {
+        const element = scrollRef.current;
+
+        if (!element) {
+            return true;
+        }
+
+        return element.scrollHeight - element.scrollTop - element.clientHeight < AUTO_FOLLOW_BOTTOM_OFFSET;
     }
 
-    function scrollToPageBottom() {
-        window.scrollTo({
-            top: document.documentElement.scrollHeight,
-            behavior: "smooth",
-        });
+    function scrollToThreadBottom() {
+        const element = scrollRef.current;
+
+        if (element) {
+            element.scrollTo({ top: element.scrollHeight });
+        }
     }
 
     useEffect(() => {
+        const element = scrollRef.current;
+
+        if (!element) {
+            return;
+        }
+
         const handleScroll = () => {
-            setShowBackToTop(window.scrollY > 280);
-            shouldAutoFollowRef.current = isNearPageBottom();
+            const near = isNearThreadBottom();
+            setIsNearBottom(near);
+            shouldAutoFollowRef.current = near;
         };
 
-        handleScroll();
-        window.addEventListener("scroll", handleScroll, { passive: true });
+        element.addEventListener("scroll", handleScroll, { passive: true });
 
         return () => {
-            window.removeEventListener("scroll", handleScroll);
+            element.removeEventListener("scroll", handleScroll);
         };
     }, []);
 
@@ -79,14 +97,17 @@ export default function App() {
             return;
         }
 
-        const stillExists = citations.some((citation) => citation.file_path === selectedEvidencePath);
+        const stillExists = allCitations.some((citation) => citation.file_path === selectedEvidencePath);
+
         if (!stillExists) {
             setSelectedEvidencePath(null);
         }
-    }, [citations, selectedEvidencePath]);
+    }, [allCitations, selectedEvidencePath]);
 
     useEffect(() => {
-        if (!isLoading) {
+        const element = scrollRef.current;
+
+        if (!element || !isLoading) {
             return;
         }
 
@@ -98,9 +119,7 @@ export default function App() {
             }
 
             cancelAnimationFrame(frameId);
-            frameId = window.requestAnimationFrame(() => {
-                scrollToPageBottom();
-            });
+            frameId = window.requestAnimationFrame(scrollToThreadBottom);
         };
 
         followIfNeeded();
@@ -115,21 +134,20 @@ export default function App() {
             followIfNeeded();
         });
 
-        resizeObserver.observe(document.body);
+        resizeObserver.observe(element);
 
         return () => {
             cancelAnimationFrame(frameId);
             resizeObserver.disconnect();
         };
-    }, [isLoading]);
+    }, [isLoading, turns]);
 
     async function handleSend() {
         setSelectedEvidencePath(null);
         await sendMessage(message);
-    }
-
-    function handleBackToTop() {
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        setMessage("");
+        shouldAutoFollowRef.current = true;
+        window.requestAnimationFrame(scrollToThreadBottom);
     }
 
     function handleSelectEvidence(filePath: string) {
@@ -138,9 +156,9 @@ export default function App() {
 
     async function handleSelectHistory(item: ConversationHistoryItem) {
         setSelectedEvidencePath(null);
-        setMessage(item.message);
+        setMessage("");
         await restoreHistory(item);
-        window.scrollTo({ top: 0, behavior: "smooth" });
+        window.requestAnimationFrame(scrollToThreadBottom);
 
         if (window.innerWidth <= 980) {
             setHistoryOpen(false);
@@ -151,55 +169,76 @@ export default function App() {
         setSelectedEvidencePath(null);
         setMessage("");
         startNewSession();
-        window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
     return (
-        <div className="page-shell">
-            <header className="hero">
-                <div className="hero-top">
-                    <div className="hero-badge">Codebase Agent</div>
-                    <div className="hero-actions">
-                        <button className="new-session-btn" type="button" onClick={handleStartNewSession}>
-                            新建会话
-                        </button>
-                        <button className="history-toggle-btn" type="button" onClick={() => setHistoryOpen(true)}>
-                            最近会话
-                            <span className="history-toggle-count">{historyItems.length}</span>
-                        </button>
-                    </div>
+        <div className="app-shell">
+            <header className="top-bar">
+                <span className={["lamp", lampState].filter(Boolean).join(" ")} aria-hidden="true" />
+                <div className="top-brand">
+                    <span className="brand-name">夜读</span>
+                    <span className="brand-sub">Codebase Agent · 答案有出处</span>
                 </div>
-                <h1>代码库 Agent 控制台</h1>
-                <p className="hero-subtitle">
-                    用更工程化的方式查看回答、证据和工具执行轨迹，让 Agent 的分析过程真正可见。
-                </p>
+                <div className="top-actions">
+                    <button className="ghost-btn" type="button" onClick={handleStartNewSession}>
+                        新建会话
+                    </button>
+                    <button className="ghost-btn" type="button" onClick={() => setHistoryOpen(true)}>
+                        最近会话
+                        <span className="history-toggle-count">{historyItems.length}</span>
+                    </button>
+                </div>
             </header>
 
-            <main className="layout">
+            <main className="thread-scroll" ref={scrollRef}>
+                {turns.length === 0 ? (
+                    <div className="welcome">
+                        <h1>今晚，从哪一段代码读起？</h1>
+                        <p className="welcome-subtitle">
+                            Agent 会自己去读文件、执行检索，把每一步与每一处出处都摆在灯下——回答不是没有根据的一句话。
+                        </p>
+                        <div className="suggestion-grid">
+                            {EXAMPLE_SUGGESTIONS.map((example) => (
+                                <button
+                                    key={example.title}
+                                    className="quick-item"
+                                    type="button"
+                                    onClick={() => setMessage(example.prompt)}
+                                >
+                                    <strong>{example.title}</strong>
+                                    <span>{example.description}</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                ) : (
+                    <MessageThread
+                        turns={turns}
+                        selectedEvidencePath={selectedEvidencePath}
+                        onSelectEvidence={handleSelectEvidence}
+                    />
+                )}
+            </main>
+
+            <footer className="composer-bar">
                 <ChatInput
                     value={message}
                     onChange={setMessage}
-                    onSend={handleSend}
-                    disabled={isLoading}
+                    onSend={() => {
+                        void handleSend();
+                    }}
+                    onStop={stopGeneration}
+                    isLoading={isLoading}
                     status={status}
                     activeSession={activeSession}
                 />
+            </footer>
 
-                <section className="stack">
-                    <AnswerPanel answer={answer} isLoading={isLoading} />
-                    <CitationsPanel
-                        citations={citations}
-                        isLoading={isLoading}
-                        selectedFilePath={selectedEvidencePath}
-                        onSelectFilePath={handleSelectEvidence}
-                    />
-                    <StepsPanel
-                        steps={steps}
-                        isLoading={isLoading}
-                        selectedEvidencePath={selectedEvidencePath}
-                    />
-                </section>
-            </main>
+            {!isNearBottom ? (
+                <button className="jump-latest-btn" type="button" onClick={scrollToThreadBottom}>
+                    回到最新 ↓
+                </button>
+            ) : null}
 
             <HistorySidebar
                 items={historyItems}
@@ -210,13 +249,13 @@ export default function App() {
                     void handleSelectHistory(item);
                 }}
                 onClose={() => setHistoryOpen(false)}
+                onDeleteHistory={(sessionId) => {
+                    void deleteHistoryItem(sessionId);
+                }}
+                onRenameHistory={(sessionId, title) => {
+                    void renameHistoryItem(sessionId, title);
+                }}
             />
-
-            {showBackToTop ? (
-                <button className="back-to-top-btn" type="button" onClick={handleBackToTop}>
-                    回到顶部
-                </button>
-            ) : null}
         </div>
     );
 }
