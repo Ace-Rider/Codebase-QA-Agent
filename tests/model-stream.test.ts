@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// 真实请求路径会读取环境变量（fetch 被 mock，但配置校验仍会执行），
+// 测试自己声明所需的 env，使 CI 无 .env 也能跑
+process.env.AI_API_KEY ??= "test-api-key";
+process.env.AI_BASE_URL ??= "https://model.test.invalid/v1";
+process.env.AI_MODEL ??= "test-model";
+
 // model.ts 在模块加载时读取环境变量，但测试中 fetch 全程被 mock，不会发出真实请求
 import { callModelWithToolsStream } from "../src/lib/model.js";
 

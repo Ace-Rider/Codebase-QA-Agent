@@ -1,12 +1,20 @@
 import "dotenv/config";
 
-const apiKey = process.env.AI_API_KEY;
-const baseUrl = process.env.AI_BASE_URL;
-const model = process.env.AI_MODEL;
+/**
+ * 环境变量在发请求时才读取与校验（而不是模块加载时），
+ * 这样不配置 .env 的环境（如 CI）也能 import 本模块跑单测。
+ */
+function getModelConfig() {
+    const apiKey = process.env.AI_API_KEY;
+    const baseUrl = process.env.AI_BASE_URL;
+    const model = process.env.AI_MODEL;
 
-if (!apiKey) throw new Error("AI_API_KEY is missing");
-if (!baseUrl) throw new Error("AI_BASE_URL is missing");
-if (!model) throw new Error("AI_MODEL is missing");
+    if (!apiKey) throw new Error("AI_API_KEY is missing");
+    if (!baseUrl) throw new Error("AI_BASE_URL is missing");
+    if (!model) throw new Error("AI_MODEL is missing");
+
+    return { apiKey, baseUrl, model };
+}
 
 export type ChatMessage =
     | { role: "system"; content: string }
@@ -118,7 +126,7 @@ type StreamHandlers = {
     onContentDelta?: (delta: string) => void | Promise<void>;
 };
 
-function createRequestBody(messages: ChatMessage[], includeUsage: boolean) {
+function createRequestBody(messages: ChatMessage[], includeUsage: boolean, model: string) {
     return {
         model,
         messages,
@@ -132,6 +140,8 @@ function createRequestBody(messages: ChatMessage[], includeUsage: boolean) {
 }
 
 async function requestModelStream(messages: ChatMessage[], signal?: AbortSignal) {
+    const { apiKey, baseUrl, model } = getModelConfig();
+
     const sendRequest = (includeUsage: boolean) =>
         fetch(`${baseUrl}/chat/completions`, {
             method: "POST",
@@ -139,7 +149,7 @@ async function requestModelStream(messages: ChatMessage[], signal?: AbortSignal)
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${apiKey}`,
             },
-            body: JSON.stringify(createRequestBody(messages, includeUsage)),
+            body: JSON.stringify(createRequestBody(messages, includeUsage, model)),
             ...(signal ? { signal } : {}),
         });
 
