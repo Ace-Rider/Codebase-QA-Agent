@@ -1,5 +1,7 @@
 # Codebase QA Agent
 
+[![CI](https://github.com/Ace-Rider/Codebase-QA-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Ace-Rider/Codebase-QA-Agent/actions/workflows/ci.yml)
+
 一个面向本地代码仓库的智能问答 Agent。
 
 用户在前端输入自然语言问题后，系统会结合大模型与本地代码检索工具，对当前项目进行多轮分析，并将答案生成过程、工具调用轨迹、引用文件和最终结果实时展示在页面中。

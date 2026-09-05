@@ -33,6 +33,12 @@ export default function App() {
 
     const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
     const lampState = isLoading ? "lamp-working" : lastTurn?.error ? "lamp-error" : "";
+    // 灯是纯视觉元素（aria-hidden），这里用 live region 把状态变化播报给屏幕阅读器
+    const lampAnnouncement = isLoading
+        ? "Agent 正在工作"
+        : lastTurn?.error
+          ? "回答出错，灯已变红"
+          : "";
 
     const allCitations = useMemo(() => turns.flatMap((turn) => turn.citations), [turns]);
 
@@ -173,6 +179,9 @@ export default function App() {
 
     return (
         <div className="app-shell">
+            <span aria-live="polite" className="sr-only">
+                {lampAnnouncement}
+            </span>
             <header className="top-bar">
                 <span className={["lamp", lampState].filter(Boolean).join(" ")} aria-hidden="true" />
                 <div className="top-brand">
