@@ -20,6 +20,7 @@ export default function App() {
         isLoading,
         historyItems,
         activeHistoryId,
+        workspace,
         restoreHistory,
         startNewSession,
         sendMessage,
@@ -156,6 +157,18 @@ export default function App() {
         window.requestAnimationFrame(scrollToThreadBottom);
     }
 
+    // 失败轮次的重试：直接复用该轮的问题重新发送
+    async function handleRetryTurn(question: string) {
+        if (isLoading) {
+            return;
+        }
+
+        setSelectedEvidencePath(null);
+        shouldAutoFollowRef.current = true;
+        window.requestAnimationFrame(scrollToThreadBottom);
+        await sendMessage(question);
+    }
+
     function handleSelectEvidence(filePath: string) {
         setSelectedEvidencePath((current) => (current === filePath ? null : filePath));
     }
@@ -186,7 +199,9 @@ export default function App() {
                 <span className={["lamp", lampState].filter(Boolean).join(" ")} aria-hidden="true" />
                 <div className="top-brand">
                     <span className="brand-name">夜读</span>
-                    <span className="brand-sub">Codebase Agent · 答案有出处</span>
+                    <span className="brand-sub">
+                        {workspace ? `正在读 · ${workspace.name}` : "Codebase Agent · 答案有出处"}
+                    </span>
                 </div>
                 <div className="top-actions">
                     <button className="ghost-btn" type="button" onClick={handleStartNewSession}>
@@ -225,6 +240,9 @@ export default function App() {
                         turns={turns}
                         selectedEvidencePath={selectedEvidencePath}
                         onSelectEvidence={handleSelectEvidence}
+                        onRetryTurn={(question) => {
+                            void handleRetryTurn(question);
+                        }}
                     />
                 )}
             </main>

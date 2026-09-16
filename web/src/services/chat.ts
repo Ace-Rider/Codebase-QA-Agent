@@ -27,6 +27,10 @@ export function fetchConversationHistory() {
     return requestJson<ConversationHistoryItem[]>("/api/conversations");
 }
 
+export function fetchWorkspaceInfo() {
+    return requestJson<{ root: string; name: string; isExternal: boolean }>("/api/workspace");
+}
+
 export function fetchConversationDetail(sessionId: string) {
     return requestJson<ConversationDetail>(`/api/conversations/${encodeURIComponent(sessionId)}`);
 }

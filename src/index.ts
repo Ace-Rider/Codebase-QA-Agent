@@ -13,9 +13,48 @@ import {
 } from "./agent/session-store.js";
 import { runAgentStream, type ChatResponse, type StreamEvent } from "./agent/run-agent.js";
 import { readFileContent } from "./tools/read-file.js";
+import { getProjectRoot } from "./tools/workspace.js";
 
 const app = express();
 app.use(express.json());
+
+/**
+ * 把底层报错翻译成用户能看懂、知道下一步做什么的提示。
+ * 未匹配的错误保留原始信息（对开发者排查仍有价值）。
+ */
+function toUserFriendlyError(error: unknown) {
+    const raw = error instanceof Error ? error.message : String(error);
+
+    if (/abort/i.test(raw)) {
+        return "已手动停止";
+    }
+
+    if (/\b403\b|invalid_api_key|unauthorized/i.test(raw)) {
+        return "API Key 无效或已过期，请检查 .env 中的 AI_API_KEY";
+    }
+
+    if (/\b401\b/.test(raw)) {
+        return "鉴权失败，请检查 .env 中的 AI_API_KEY";
+    }
+
+    if (/\b429\b|rate.?limit/i.test(raw)) {
+        return "请求过于频繁或额度不足，请稍后再试";
+    }
+
+    if (/\b404\b|not found.*model|invalid.*model/i.test(raw)) {
+        return "模型不存在，请检查 .env 中的 AI_MODEL";
+    }
+
+    if (/timeout|ETIMEDOUT|ECONNRESET|fetch failed|ENOTFOUND/i.test(raw)) {
+        return "网络连接失败，请检查网络或 AI_BASE_URL 配置";
+    }
+
+    if (/AI_API_KEY is missing|AI_BASE_URL is missing|AI_MODEL is missing/.test(raw)) {
+        return `${raw}，请在项目根目录配置 .env 文件（参考 .env.example）`;
+    }
+
+    return raw;
+}
 
 const webDistDir = path.resolve("web/dist");
 const hasWebDist = existsSync(webDistDir);
@@ -31,6 +70,15 @@ if (hasWebDist) {
 
 app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
+});
+
+// 当前工作区信息：前端顶栏展示，让用户知道 Agent 正在读哪个目录
+app.get("/api/workspace", (_req, res) => {
+    res.json({
+        root: getProjectRoot(),
+        name: path.basename(getProjectRoot()),
+        isExternal: process.env.WORKSPACE_ROOT !== undefined,
+    });
 });
 
 app.get("/api/conversations", async (_req, res, next) => {
@@ -159,7 +207,7 @@ app.post("/api/chat/stream", async (req, res) => {
         writeEvent({ type: "final", result });
         res.write("data: [DONE]\n\n");
     } catch (error) {
-        const messageText = error instanceof Error ? error.message : "internal server error";
+        const messageText = toUserFriendlyError(error);
         const result = createChatErrorResponse(messageText);
 
         if (sessionId && message && turnContext) {

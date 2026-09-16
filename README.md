@@ -245,7 +245,12 @@ AI_API_KEY=your_api_key
 AI_BASE_URL=https://your-compatible-openai-base-url/v1
 AI_MODEL=your_model_name
 DATABASE_URL="file:./prisma/dev.db"
+
+# 可选：让 Agent 分析你自己的项目（不配置则默认分析本仓库自身）
+# WORKSPACE_ROOT=C:\path\to\your\project
 ```
+
+配置 `WORKSPACE_ROOT` 后，Agent 的文件工具沙箱会切换到指定目录——顶栏会显示「正在读 · 项目名」，你可以直接对自己的代码库提问。
 
 ### 3. 启动开发环境
 

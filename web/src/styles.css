@@ -1660,6 +1660,56 @@ button {
   border: 0;
 }
 
+/* ---------- 工具阶段实时状态 & 失败重试 ---------- */
+
+.tool-phase-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 6px 2px;
+}
+
+.tool-phase-status .status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lamp);
+  box-shadow: 0 0 8px 1px rgba(212, 168, 83, 0.45);
+  animation: lamp-breathe 1.6s ease-in-out infinite;
+}
+
+.turn-error-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.turn-error-box .empty-state {
+  color: var(--err, #d9822b);
+}
+
+.retry-btn {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--lamp);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--lamp) 45%, transparent);
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.retry-btn:hover {
+  border-color: var(--lamp);
+  background: color-mix(in srgb, var(--lamp) 10%, transparent);
+}
+
 /* ---------- 响应式 ---------- */
 
 @media (max-width: 760px) {

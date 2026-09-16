@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import type { ChatTurn } from "../types/chat";
+import type { ChatTurn, Step } from "../types/chat";
 import { CitationsPanel } from "./CitationsPanel";
 import { StepsPanel } from "./StepsPanel";
 
@@ -12,6 +12,7 @@ type MessageThreadProps = {
     turns: ChatTurn[];
     selectedEvidencePath: string | null;
     onSelectEvidence: (filePath: string) => void;
+    onRetryTurn: (question: string) => void;
 };
 
 const FOOTNOTE_FLASH_MS = 1800;
@@ -39,14 +40,30 @@ function TypingIndicator() {
     );
 }
 
+/** 工具执行阶段的实时状态：让用户知道 Agent 正在干什么，而不是盯着空白等待 */
+function ToolPhaseStatus({ steps }: { steps: Step[] }) {
+    const lastStep = steps[steps.length - 1];
+    const label = lastStep?.tool_label ?? "分析问题";
+    const iteration = lastStep?.iteration ?? 1;
+
+    return (
+        <div className="tool-phase-status" aria-live="polite">
+            <span className="status-dot" />
+            第 {iteration} 轮 · 正在{label}（已执行 {steps.length} 步）
+        </div>
+    );
+}
+
 function TurnBlock({
     turn,
     selectedEvidencePath,
     onSelectEvidence,
+    onRetryTurn,
 }: {
     turn: ChatTurn;
     selectedEvidencePath: string | null;
     onSelectEvidence: (filePath: string) => void;
+    onRetryTurn: (question: string) => void;
 }) {
     // 被点击的脚注编号：滚动到对应出处条目并短暂高亮
     const [flashFootnote, setFlashFootnote] = useState<number | null>(null);
@@ -109,7 +126,22 @@ function TurnBlock({
                             <MarkdownAnswer content={turn.answer} onCitationRef={handleCitationRef} />
                         </Suspense>
                     ) : turn.isStreaming ? (
-                        <TypingIndicator />
+                        turn.steps.length > 0 ? (
+                            <ToolPhaseStatus steps={turn.steps} />
+                        ) : (
+                            <TypingIndicator />
+                        )
+                    ) : turn.error ? (
+                        <div className="turn-error-box">
+                            <p className="empty-state">{turn.error}</p>
+                            <button
+                                type="button"
+                                className="retry-btn"
+                                onClick={() => onRetryTurn(turn.question)}
+                            >
+                                重试这一轮
+                            </button>
+                        </div>
                     ) : (
                         <div className="empty-state">这一轮没有生成回答。</div>
                     )}
@@ -134,7 +166,12 @@ function TurnBlock({
     );
 }
 
-export function MessageThread({ turns, selectedEvidencePath, onSelectEvidence }: MessageThreadProps) {
+export function MessageThread({
+    turns,
+    selectedEvidencePath,
+    onSelectEvidence,
+    onRetryTurn,
+}: MessageThreadProps) {
     return (
         <div className="thread">
             {turns.map((turn) => (
@@ -143,6 +180,7 @@ export function MessageThread({ turns, selectedEvidencePath, onSelectEvidence }:
                     turn={turn}
                     selectedEvidencePath={selectedEvidencePath}
                     onSelectEvidence={onSelectEvidence}
+                    onRetryTurn={onRetryTurn}
                 />
             ))}
         </div>

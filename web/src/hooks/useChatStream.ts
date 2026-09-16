@@ -3,6 +3,7 @@ import {
     deleteConversationRequest,
     fetchConversationDetail,
     fetchConversationHistory,
+    fetchWorkspaceInfo,
     renameConversationRequest,
     requestChatStream,
 } from "../services/chat";
@@ -56,6 +57,7 @@ export function useChatStream() {
     const [isLoading, setIsLoading] = useState(false);
     const [historyItems, setHistoryItems] = useState<ConversationHistoryItem[]>([]);
     const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
+    const [workspace, setWorkspace] = useState<{ root: string; name: string; isExternal: boolean } | null>(null);
 
     const abortRef = useRef<AbortController | null>(null);
 
@@ -64,10 +66,14 @@ export function useChatStream() {
 
         async function loadInitialHistory() {
             try {
-                const items = await fetchConversationHistory();
+                const [items, workspaceInfo] = await Promise.all([
+                    fetchConversationHistory(),
+                    fetchWorkspaceInfo(),
+                ]);
 
                 if (!cancelled) {
                     setHistoryItems(items);
+                    setWorkspace(workspaceInfo);
                 }
             } catch (error) {
                 if (!cancelled) {
@@ -401,6 +407,7 @@ export function useChatStream() {
         isLoading,
         historyItems,
         activeHistoryId,
+        workspace,
         restoreHistory,
         startNewSession,
         sendMessage,
