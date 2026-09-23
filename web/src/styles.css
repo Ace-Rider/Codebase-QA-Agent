@@ -1413,6 +1413,56 @@ button {
   color: var(--ink);
 }
 
+/* 抽屉内搜索：按标题/提问内容过滤历史 */
+.history-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 22px 0;
+}
+
+.history-search input {
+  flex: 1;
+  min-width: 0;
+  background: var(--night-3);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 7px 10px;
+}
+
+.history-search input::placeholder {
+  color: var(--faint);
+}
+
+.history-search input:focus {
+  outline: none;
+  border-color: var(--lamp);
+}
+
+.history-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.history-search-clear {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.history-search-clear:hover {
+  color: var(--ink);
+  border-color: var(--lamp-line);
+}
+
 .panel-kicker {
   font-family: var(--mono);
   font-size: 11px;

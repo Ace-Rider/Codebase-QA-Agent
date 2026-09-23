@@ -6,6 +6,8 @@ import { useChatStream } from "./hooks/useChatStream";
 import type { ConversationHistoryItem } from "./types/chat";
 
 const AUTO_FOLLOW_BOTTOM_OFFSET = 140;
+// 未选中任何历史会话时，输入草稿挂在虚拟 key "__new__" 上
+const DRAFT_NEW_SESSION_KEY = "__new__";
 
 export default function App() {
     const [message, setMessage] = useState("");
@@ -14,6 +16,8 @@ export default function App() {
     const [isNearBottom, setIsNearBottom] = useState(true);
     const scrollRef = useRef<HTMLElement | null>(null);
     const shouldAutoFollowRef = useRef(true);
+    // 每个会话一份输入草稿：切走再回来，打了一半的问题不丢
+    const draftsRef = useRef<Map<string, string>>(new Map());
     const {
         turns,
         status,
@@ -149,9 +153,21 @@ export default function App() {
         };
     }, [isLoading, turns]);
 
+    function currentDraftKey() {
+        return activeHistoryId ?? DRAFT_NEW_SESSION_KEY;
+    }
+
+    function switchDraftTo(nextKey: string) {
+        draftsRef.current.set(currentDraftKey(), message);
+        setMessage(draftsRef.current.get(nextKey) ?? "");
+    }
+
     async function handleSend() {
         setSelectedEvidencePath(null);
+        // sendMessage 过程中 activeHistoryId 会切换到新会话，先记住草稿所属 key
+        const draftKey = currentDraftKey();
         await sendMessage(message);
+        draftsRef.current.delete(draftKey);
         setMessage("");
         shouldAutoFollowRef.current = true;
         window.requestAnimationFrame(scrollToThreadBottom);
@@ -175,7 +191,7 @@ export default function App() {
 
     async function handleSelectHistory(item: ConversationHistoryItem) {
         setSelectedEvidencePath(null);
-        setMessage("");
+        switchDraftTo(item.id);
         await restoreHistory(item);
         window.requestAnimationFrame(scrollToThreadBottom);
 
@@ -186,7 +202,7 @@ export default function App() {
 
     function handleStartNewSession() {
         setSelectedEvidencePath(null);
-        setMessage("");
+        switchDraftTo(DRAFT_NEW_SESSION_KEY);
         startNewSession();
     }
 

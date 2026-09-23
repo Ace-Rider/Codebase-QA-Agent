@@ -81,9 +81,13 @@ app.get("/api/workspace", (_req, res) => {
     });
 });
 
-app.get("/api/conversations", async (_req, res, next) => {
+app.get("/api/conversations", async (req, res, next) => {
     try {
-        const conversations = await listConversations();
+        // 支持前端按需拉取更多历史（配合抽屉内搜索），上限 200 条防止响应过大
+        const requested = Number.parseInt(String(req.query.limit ?? ""), 10);
+        const limit =
+            Number.isFinite(requested) && requested > 0 ? Math.min(requested, 200) : 50;
+        const conversations = await listConversations(limit);
         res.json(conversations);
     } catch (error) {
         next(error);

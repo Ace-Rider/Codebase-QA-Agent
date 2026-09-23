@@ -23,8 +23,8 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
     return response.json() as Promise<T>;
 }
 
-export function fetchConversationHistory() {
-    return requestJson<ConversationHistoryItem[]>("/api/conversations");
+export function fetchConversationHistory(limit = 50) {
+    return requestJson<ConversationHistoryItem[]>(`/api/conversations?limit=${limit}`);
 }
 
 export function fetchWorkspaceInfo() {

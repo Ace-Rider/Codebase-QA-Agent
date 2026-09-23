@@ -247,7 +247,7 @@ export async function saveSessionTurn(
     });
 }
 
-export async function listConversations(limit = 12) {
+export async function listConversations(limit = 50) {
     const conversations = await prisma.conversation.findMany({
         orderBy: {
             updatedAt: "desc",

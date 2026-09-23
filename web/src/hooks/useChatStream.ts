@@ -10,7 +10,7 @@ import {
 import type { ChatResponse, ChatTurn, ConversationHistoryItem, Step } from "../types/chat";
 
 const INITIAL_STATUS = "准备提问";
-const MAX_HISTORY_ITEMS = 12;
+const MAX_HISTORY_ITEMS = 50;
 const STOPPED_MESSAGE = "已手动停止生成";
 
 function createId() {
