@@ -7,7 +7,7 @@ import {
     renameConversationRequest,
     requestChatStream,
 } from "../services/chat";
-import type { ChatResponse, ChatTurn, ConversationHistoryItem, Step } from "../types/chat";
+import type { ChatResponse, ChatTurn, Citation, ConversationHistoryItem, Step } from "../types/chat";
 
 const INITIAL_STATUS = "准备提问";
 const MAX_HISTORY_ITEMS = 50;
@@ -49,6 +49,63 @@ function createDraftHistoryItem(message: string): ConversationHistoryItem {
 function upsertHistoryItem(currentItems: ConversationHistoryItem[], nextItem: ConversationHistoryItem) {
     const mergedItems = [nextItem, ...currentItems.filter((item) => item.id !== nextItem.id)];
     return mergedItems.slice(0, MAX_HISTORY_ITEMS);
+}
+
+/**
+ * 流式答案缓冲：增量先攒在 pending 里，rAF 每帧最多提交一次，
+ * 避免每个 delta 都触发一次 React 重渲染。
+ * 拥有已生成内容的唯一权威副本（current）。
+ */
+function createStreamBuffer(onAnswer: (answer: string) => void) {
+    let committed = "";
+    let pending = "";
+    let frameId = 0;
+
+    const commit = () => {
+        frameId = 0;
+
+        if (!pending) {
+            return;
+        }
+
+        committed += pending;
+        pending = "";
+        onAnswer(committed);
+    };
+
+    const flush = () => {
+        if (frameId) {
+            window.cancelAnimationFrame(frameId);
+            frameId = 0;
+        }
+        commit();
+    };
+
+    return {
+        /** 追加一段增量，下一帧统一提交 */
+        schedule(delta: string) {
+            pending += delta;
+
+            if (!frameId) {
+                frameId = window.requestAnimationFrame(commit);
+            }
+        },
+        /** 立即提交未落盘的增量（流结束/重置/收尾前调用） */
+        flush,
+        /** 清空已生成内容（模型先输出解释、后决定调工具时使用） */
+        reset() {
+            flush();
+            committed = "";
+            onAnswer("");
+        },
+        /** 用最终答案覆盖已生成内容 */
+        replace(answer: string) {
+            committed = answer;
+        },
+        get current() {
+            return committed;
+        },
+    };
 }
 
 export function useChatStream() {
@@ -97,6 +154,37 @@ export function useChatStream() {
 
     function upsertLocalHistory(item: ConversationHistoryItem) {
         setHistoryItems((currentItems) => upsertHistoryItem(currentItems, item));
+    }
+
+    /**
+     * 轮次统一收尾：把快照写入当前 turn、同步历史列表、更新状态条。
+     * 正常完成 / 手动中止 / 请求失败三条路径共用，只差在传入的快照内容。
+     * citations 传 undefined 表示保留 turn 当前引用（中止场景）；
+     * displayAnswer 只影响界面展示（如「（已停止生成）」兜底），不写入历史。
+     */
+    function settleTurn(
+        turnId: string,
+        draftItem: ConversationHistoryItem,
+        snapshot: { answer: string; steps: Step[]; citations?: Citation[]; error: string | null },
+        displayAnswer?: string,
+    ) {
+        patchTurn(turnId, {
+            answer: displayAnswer ?? snapshot.answer,
+            steps: snapshot.steps,
+            ...(snapshot.citations !== undefined ? { citations: snapshot.citations } : {}),
+            error: snapshot.error,
+            isStreaming: false,
+        });
+        upsertLocalHistory({
+            ...draftItem,
+            answer: snapshot.answer,
+            steps: snapshot.steps,
+            ...(snapshot.citations !== undefined ? { citations: snapshot.citations } : {}),
+            error: snapshot.error,
+            updatedAt: new Date().toISOString(),
+            isPending: false,
+        });
+        setStatus(snapshot.error || "已完成");
     }
 
     function insertDraftHistory(message: string) {
@@ -210,39 +298,8 @@ export function useChatStream() {
         const abortController = new AbortController();
         abortRef.current = abortController;
 
-        // 流式增量先进入 pending 缓冲，用 rAF 每帧只提交一次，避免每个 delta 都触发重渲染
-        const answerRef = { current: "" };
-        const pendingRef = { current: "" };
         const stepsRef = { current: [] as Step[] };
-        const frameRef = { current: 0 };
-
-        const commitPending = () => {
-            frameRef.current = 0;
-
-            if (!pendingRef.current) {
-                return;
-            }
-
-            answerRef.current += pendingRef.current;
-            pendingRef.current = "";
-            patchTurn(turnId, { answer: answerRef.current });
-        };
-
-        const scheduleDelta = (delta: string) => {
-            pendingRef.current += delta;
-
-            if (!frameRef.current) {
-                frameRef.current = window.requestAnimationFrame(commitPending);
-            }
-        };
-
-        const flushPending = () => {
-            if (frameRef.current) {
-                window.cancelAnimationFrame(frameRef.current);
-                frameRef.current = 0;
-            }
-            commitPending();
-        };
+        const answerBuffer = createStreamBuffer((answer) => patchTurn(turnId, { answer }));
 
         let streamError: string | null = null;
         let finalResult: ChatResponse | null = null;
@@ -257,12 +314,10 @@ export function useChatStream() {
                             setStatus(event.message);
                             break;
                         case "answer_delta":
-                            scheduleDelta(event.delta || "");
+                            answerBuffer.schedule(event.delta || "");
                             break;
                         case "answer_reset":
-                            flushPending();
-                            answerRef.current = "";
-                            patchTurn(turnId, { answer: "" });
+                            answerBuffer.reset();
                             break;
                         case "step":
                             stepsRef.current = [...stepsRef.current, event.step];
@@ -274,15 +329,15 @@ export function useChatStream() {
                             break;
                         case "final":
                             finalResult = event.result;
-                            flushPending();
+                            answerBuffer.flush();
 
                             if (event.result.answer) {
-                                answerRef.current = event.result.answer;
+                                answerBuffer.replace(event.result.answer);
                             }
 
                             stepsRef.current = event.result.steps?.length ? event.result.steps : stepsRef.current;
                             patchTurn(turnId, {
-                                answer: answerRef.current,
+                                answer: answerBuffer.current,
                                 steps: stepsRef.current,
                                 citations: event.result.citations || [],
                                 error: event.result.error,
@@ -296,35 +351,18 @@ export function useChatStream() {
                 abortController.signal,
             );
 
-            flushPending();
+            answerBuffer.flush();
 
             const snapshot: ChatResponse =
                 finalResult ??
                 {
-                    answer: answerRef.current,
+                    answer: answerBuffer.current,
                     steps: stepsRef.current,
                     citations: [],
                     error: streamError,
                 };
 
-            patchTurn(turnId, {
-                answer: snapshot.answer,
-                steps: snapshot.steps,
-                citations: snapshot.citations,
-                error: snapshot.error,
-                isStreaming: false,
-            });
-
-            upsertLocalHistory({
-                ...draftItem,
-                answer: snapshot.answer,
-                steps: snapshot.steps,
-                citations: snapshot.citations,
-                error: snapshot.error,
-                updatedAt: new Date().toISOString(),
-                isPending: false,
-            });
-            setStatus(snapshot.error || "已完成");
+            settleTurn(turnId, draftItem, snapshot);
 
             // final 事件在服务端落库之后才发出，此时回读可拿到规范的 turn 记录
             if (!snapshot.error) {
@@ -337,43 +375,24 @@ export function useChatStream() {
                 });
             }
         } catch (caughtError) {
-            flushPending();
-            const isAborted = abortController.signal.aborted;
+            answerBuffer.flush();
 
-            if (isAborted) {
-                patchTurn(turnId, {
-                    answer: answerRef.current || "（已停止生成）",
-                    steps: stepsRef.current,
-                    error: STOPPED_MESSAGE,
-                    isStreaming: false,
-                });
-                setStatus(STOPPED_MESSAGE);
-                upsertLocalHistory({
-                    ...draftItem,
-                    answer: answerRef.current,
-                    steps: stepsRef.current,
-                    error: STOPPED_MESSAGE,
-                    updatedAt: new Date().toISOString(),
-                    isPending: false,
-                });
+            if (abortController.signal.aborted) {
+                // 中止：界面展示兜底文案，历史记录保留已生成的部分内容
+                settleTurn(
+                    turnId,
+                    draftItem,
+                    { answer: answerBuffer.current, steps: stepsRef.current, error: STOPPED_MESSAGE },
+                    answerBuffer.current || "（已停止生成）",
+                );
             } else {
                 const messageText = caughtError instanceof Error ? caughtError.message : "unknown error";
 
-                patchTurn(turnId, {
-                    answer: answerRef.current,
+                settleTurn(turnId, draftItem, {
+                    answer: answerBuffer.current,
                     steps: stepsRef.current,
                     citations: [],
                     error: messageText,
-                    isStreaming: false,
-                });
-                setStatus(messageText);
-                upsertLocalHistory({
-                    ...draftItem,
-                    answer: answerRef.current,
-                    steps: stepsRef.current,
-                    error: messageText,
-                    updatedAt: new Date().toISOString(),
-                    isPending: false,
                 });
             }
         } finally {

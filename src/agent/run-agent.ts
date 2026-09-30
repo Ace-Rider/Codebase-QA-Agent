@@ -1,5 +1,6 @@
-import { callModelWithToolsStream, type ChatMessage } from "../lib/model.js";
+import { callModelWithToolsStream, type ChatMessage, type ModelToolCall } from "../lib/model.js";
 import { normalizeResult } from "../tools/normalizeResult.js";
+import { normalizeStep } from "../tools/format-step.js";
 import { runTool } from "./run-tool.js";
 
 export type Step = {
@@ -92,20 +93,9 @@ export function createMessagesForTurn(previousMessages: ChatMessage[] | undefine
     return messages;
 }
 
-function normalizeSingleStep(step: Step) {
-    return (
-        normalizeResult({
-            answer: "",
-            steps: [step],
-            citations: [],
-            error: null,
-        }).steps[0] ?? step
-    );
-}
-
 function createAssistantMessage(
     content: string,
-    toolCalls: Array<{ id: string; function: { name: string; arguments: string } }>,
+    toolCalls: ModelToolCall[],
 ) {
     if (toolCalls.length === 0) {
         return {
@@ -119,6 +109,83 @@ function createAssistantMessage(
         content,
         tool_calls: toolCalls,
     };
+}
+
+type ToolLoopContext = {
+    iteration: number;
+    messages: ChatMessage[];
+    steps: Step[];
+    onEvent: (event: Exclude<StreamEvent, { type: "final"; result: ChatResponse }>) => void | Promise<void>;
+    signal?: AbortSignal | undefined;
+};
+
+/**
+ * 执行本轮的全部工具调用：每个调用记录 Step、回填 tool 消息。
+ * 工具出错不终止流程——错误作为工具结果回传给模型自行修正。
+ * 返回 false 表示中途被中止（已执行的部分已保留在 steps/messages 里）。
+ */
+async function executeToolCalls(toolCalls: ModelToolCall[], context: ToolLoopContext): Promise<boolean> {
+    const { iteration, messages, steps, onEvent, signal } = context;
+
+    for (const toolCall of toolCalls) {
+        if (signal?.aborted) {
+            return false;
+        }
+
+        const toolName = toolCall.function.name;
+        const toolArgs = parseToolArgs(toolCall.function.arguments || "{}");
+        const startedAt = Date.now();
+
+        await onEvent({ type: "status", message: `第 ${iteration} 轮：正在执行 ${toolName}` });
+
+        try {
+            const toolResult = await runTool(toolName, toolArgs);
+            const durationMs = Date.now() - startedAt;
+
+            const step: Step = {
+                iteration,
+                status: "success",
+                duration_ms: durationMs,
+                tool_name: toolName,
+                tool_args: toolArgs,
+                tool_result: toolResult,
+            };
+
+            steps.push(step);
+
+            messages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify(toolResult),
+            });
+
+            await onEvent({ type: "step", step: normalizeStep(step) });
+        } catch (error) {
+            const durationMs = Date.now() - startedAt;
+            const message = error instanceof Error ? error.message : "tool execution failed";
+
+            const errorStep: Step = {
+                iteration,
+                status: "error",
+                duration_ms: durationMs,
+                tool_name: toolName,
+                tool_args: toolArgs,
+                tool_result: { error: message },
+            };
+
+            steps.push(errorStep);
+            await onEvent({ type: "step", step: normalizeStep(errorStep) });
+
+            // 把错误作为工具结果回传给模型，让它自行修正参数后重试
+            messages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({ error: message }),
+            });
+        }
+    }
+
+    return true;
 }
 
 function serializeForSummary(message: ChatMessage): string {
@@ -303,62 +370,16 @@ export async function runAgentStream(
             message: `第 ${iteration} 轮：模型决定调用 ${toolCalls.length} 个工具`,
         });
 
-        for (const toolCall of toolCalls) {
-            if (signal?.aborted) {
-                return buildStoppedResult();
-            }
+        const completed = await executeToolCalls(toolCalls, {
+            iteration,
+            messages,
+            steps,
+            onEvent,
+            signal,
+        });
 
-            const toolName = toolCall.function.name;
-            const toolArgs = parseToolArgs(toolCall.function.arguments || "{}");
-            const startedAt = Date.now();
-
-            await onEvent({ type: "status", message: `第 ${iteration} 轮：正在执行 ${toolName}` });
-
-            try {
-                const toolResult = await runTool(toolName, toolArgs);
-                const durationMs = Date.now() - startedAt;
-
-                const step: Step = {
-                    iteration,
-                    status: "success",
-                    duration_ms: durationMs,
-                    tool_name: toolName,
-                    tool_args: toolArgs,
-                    tool_result: toolResult,
-                };
-
-                steps.push(step);
-
-                messages.push({
-                    role: "tool",
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify(toolResult),
-                });
-
-                await onEvent({ type: "step", step: normalizeSingleStep(step) });
-            } catch (error) {
-                const durationMs = Date.now() - startedAt;
-                const message = error instanceof Error ? error.message : "tool execution failed";
-
-                const errorStep: Step = {
-                    iteration,
-                    status: "error",
-                    duration_ms: durationMs,
-                    tool_name: toolName,
-                    tool_args: toolArgs,
-                    tool_result: { error: message },
-                };
-
-                steps.push(errorStep);
-                await onEvent({ type: "step", step: normalizeSingleStep(errorStep) });
-
-                // 把错误作为工具结果回传给模型，让它自行修正参数后重试
-                messages.push({
-                    role: "tool",
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify({ error: message }),
-                });
-            }
+        if (!completed) {
+            return buildStoppedResult();
         }
     }
 

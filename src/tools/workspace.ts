@@ -32,6 +32,16 @@ export function getProjectRoot() {
     return PROJECT_ROOT;
 }
 
+/** 把绝对/相对路径转成相对工作区根目录的正斜杠路径（展示用） */
+export function toRelativePath(inputPath: string) {
+    if (!inputPath) {
+        return "";
+    }
+
+    const resolved = path.isAbsolute(inputPath) ? inputPath : path.resolve(PROJECT_ROOT, inputPath);
+    return path.relative(PROJECT_ROOT, resolved).replaceAll("\\", "/");
+}
+
 export function getDefaultCodebaseRoot() {
     return DEFAULT_CODEBASE_ROOT;
 }

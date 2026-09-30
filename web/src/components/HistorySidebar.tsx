@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { fetchConversationDetail } from "../services/chat";
-import type { ChatTurn, ConversationHistoryItem } from "../types/chat";
+import type { ConversationHistoryItem } from "../types/chat";
+import { downloadConversationMarkdown } from "../utils/exportMarkdown";
 
 type HistorySidebarProps = {
     items: ConversationHistoryItem[];
@@ -26,69 +27,6 @@ function formatHistoryTime(isoString: string) {
         hour: "2-digit",
         minute: "2-digit",
     }).format(date);
-}
-
-function buildCitationLine(citation: ChatTurn["citations"][number]) {
-    const location = citation.line_number ? ` L${citation.line_number}` : "";
-    return `- \`${citation.file_path}\`${location}`;
-}
-
-function buildConversationMarkdown(title: string, turns: ChatTurn[]) {
-    const exportedAt = new Intl.DateTimeFormat("zh-CN", {
-        dateStyle: "long",
-        timeStyle: "short",
-    }).format(new Date());
-
-    const sections = turns.map((turn, index) => {
-        const lines: string[] = [`## 问 ${index + 1}：${turn.question}`, ""];
-
-        if (turn.error) {
-            lines.push(`> ⚠️ 此轮出现错误：${turn.error}`, "");
-        }
-
-        if (turn.answer) {
-            lines.push(turn.answer, "");
-        }
-
-        if (turn.steps.length > 0) {
-            const stepLines = turn.steps.map(
-                (step) =>
-                    `- 第 ${step.iteration} 轮 · ${step.tool_label || step.tool_name}${
-                        step.status === "error" ? "（失败）" : ""
-                    }`,
-            );
-            lines.push("**工具轨迹**", "", ...stepLines, "");
-        }
-
-        if (turn.citations.length > 0) {
-            lines.push("**依据出处**", "", ...turn.citations.map(buildCitationLine), "");
-        }
-
-        return lines.join("\n");
-    });
-
-    return [
-        `# ${title}`,
-        "",
-        `> 由 Codebase QA Agent · 夜读 导出于 ${exportedAt}`,
-        "",
-        sections.join("\n---\n\n"),
-        "",
-    ].join("\n");
-}
-
-function sanitizeFilename(name: string) {
-    return name.replace(/[\\/:*?"<>|\s]+/g, "-").slice(0, 50) || "conversation";
-}
-
-function downloadMarkdown(title: string, content: string) {
-    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${sanitizeFilename(title)}.md`;
-    anchor.click();
-    URL.revokeObjectURL(url);
 }
 
 function buildHistoryMeta(item: ConversationHistoryItem) {
@@ -206,7 +144,7 @@ export function HistorySidebar({
 
         try {
             const detail = await fetchConversationDetail(item.id);
-            downloadMarkdown(detail.title, buildConversationMarkdown(detail.title, detail.turns));
+            downloadConversationMarkdown(detail.title, detail.turns);
         } catch {
             window.alert("导出失败，请稍后重试。");
         } finally {

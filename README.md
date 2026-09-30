@@ -207,8 +207,10 @@ src/
     list-files.ts           # 列出文件（ignore 过滤 + 上限）
     grep-files.ts           # 关键词检索（ignore 过滤）
     read-file.ts            # 读取文件（支持 offset/limit 行号范围）
-    workspace.ts            # 工作目录沙箱
-    normalizeResult.ts      # 结果标准化（步骤格式化、引用提取）
+    workspace.ts            # 工作目录沙箱（含相对路径展示工具）
+    normalizeResult.ts      # 结果归一化入口（答案清洗，委托下面两个模块）
+    format-step.ts          # 工具步骤的展示格式化（标签、参数摘要、结果预览）
+    citations.ts            # 依据出处提取（读取/检索引用 + 去重）
 
 prisma/
   schema.prisma             # 数据库模型（Conversation/Turn/Message）
@@ -220,6 +222,7 @@ web/
     App.tsx                 # 应用骨架与灯状态指示器
     hooks/useChatStream.ts  # SSE 消费 + rAF 批量流式渲染 + 会话管理
     services/chat.ts        # API 封装
+    utils/exportMarkdown.ts # 会话导出为 Markdown 文件
     components/
       MessageThread.tsx     # 消息线程（轮次、脚注跳转）
       MarkdownAnswer.tsx    # Markdown 渲染（懒加载、语法高亮、脚注按钮）
