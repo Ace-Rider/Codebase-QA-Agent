@@ -245,6 +245,7 @@ if (hasWebDist) {
 }
 
 const port = 3001;
-app.listen(port, () => {
+// 只绑定本机回环地址：本地单人工具，避免局域网内其他设备调用接口（消耗 API key / 读取工作区文件）
+app.listen(port, "127.0.0.1", () => {
     console.log(`server running at http://localhost:${port}`);
 });
