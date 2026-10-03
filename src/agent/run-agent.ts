@@ -304,7 +304,6 @@ export async function runAgentStream(
         normalizeResult({
             answer: lastStreamedAnswer || "（已停止生成）",
             steps,
-            citations: [],
             error: STOPPED_MESSAGE,
             token_usage: buildUsage(),
         });
@@ -355,7 +354,6 @@ export async function runAgentStream(
             return normalizeResult({
                 answer: response.content ?? "",
                 steps,
-                citations: [],
                 error: null,
                 token_usage: buildUsage(),
             });
@@ -386,7 +384,6 @@ export async function runAgentStream(
     return normalizeResult({
         answer: MAX_ITERATION_MESSAGE,
         steps,
-        citations: [],
         error: null,
         token_usage: buildUsage(),
     });

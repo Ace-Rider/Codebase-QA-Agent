@@ -9,6 +9,7 @@ type GrepMatch = {
     lineText: string;
 };
 
+// 注意：与 list-files.ts 的忽略列表刻意不同——这里额外忽略 package-lock.json（关键词扫描它是纯噪声）
 const IGNORE_PATTERNS = [
     "**/node_modules/**",
     "**/dist/**",

@@ -1,6 +1,8 @@
 import fg from "fast-glob";
 import { resolveCodebaseRoot } from "./workspace.js";
 
+// 注意：与 grep-files.ts 的忽略列表刻意不同——列目录要展示仓库结构（package-lock.json 属于结构的一部分），
+// 而 grep 扫 lock 文件是纯噪声，所以那边多忽略它
 const IGNORE_PATTERNS = [
     "**/node_modules/**",
     "**/dist/**",
